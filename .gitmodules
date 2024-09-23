@@ -1,0 +1,6 @@
+[submodule "Unity"]
+	path = Unity
+	url = https://github.com/ThrowTheSwitch/Unity.git
+[submodule "ggml"]
+	path = ggml
+	url = https://github.com/ggerganov/ggml.git
