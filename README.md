@@ -1,6 +1,6 @@
 # Nanogpt-ggml
 
-Building GPT from scratch, in code, with Karpathy's guidance and using C and [GGML](https://github.com/ggerganov/ggml).
+Building GPT2 from scratch, in code, with Karpathy's guidance and using C and [GGML](https://github.com/ggerganov/ggml).
 
 The idea is to build a transformer using GGML starting with character level tokenization on 
 a sample dataset (Shakespeare text) and building up from there. Eventually, commits that
@@ -13,7 +13,7 @@ The source video: https://www.youtube.com/watch?v=kCc8FmEb1nY
 
 Still in the bigram language model phase... and current up to 28m 50s in the source youtube video.
 
-All the code that does the initial logits prediction is in `test_model_stage1.c`. GGML does cross_entropy
+All the code that tests the initial logits prediction is in `test_model_stage1.c`. GGML does cross_entropy
 a little different and requires tensors of the same dimensions, so a one-hot table is made for the
 target token id to be used for the loss calculations.
 

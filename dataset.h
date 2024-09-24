@@ -61,3 +61,16 @@ dataset_vocab_tokenize_file(
     const char* filepath,
     TokenId** token_id_buffer,
     int64_t* token_id_buffer_size);
+
+
+// build the input and target arrays. caller knows the batch size and the
+// block size, so it is ASSUMED that `inputs` and `targets` are big enough
+// to handle all the data.
+void
+dataset_build_input_and_target_arrays(
+    TokenId* token_buffer,
+    int64_t token_buffer_count,
+    int batch_size,
+    int block_size,
+    TokenId* inputs,
+    TokenId* targets);

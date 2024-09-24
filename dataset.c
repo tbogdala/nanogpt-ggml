@@ -121,3 +121,25 @@ dataset_vocab_tokenize_file(
     fclose(dataset_file);
     return ret_value;
 }
+
+void
+dataset_build_input_and_target_arrays(
+    TokenId* token_buffer,
+    int64_t token_buffer_count,
+    int batch_size,
+    int block_size,
+    TokenId* inputs,
+    TokenId* targets)
+{
+    // we subract one here to account for the lookahead while making
+    // the `targets` buffer.
+    int64_t max_index = token_buffer_count - block_size - 1;
+
+    for (int b=0; b<batch_size; ++b) {
+        int64_t random_offset = rand() % max_index;
+        for (int i=0; i<block_size; ++i) {
+            inputs[b*block_size + i] = token_buffer[random_offset+i];
+            targets[b*block_size + i] = token_buffer[random_offset+i+1];
+        }
+    }
+}
