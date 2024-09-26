@@ -74,14 +74,20 @@ void test_model_stage1() {
             return;
         }
 
-        // setup an allocator
-        ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
+        // build a new context here for our calculations in the test
+        size_t buf_size = ggml_tensor_overhead()*NANOGPT_MAX_NODES + ggml_graph_overhead_custom(NANOGPT_MAX_NODES, true);
+        struct ggml_init_params params = {
+            /*.mem_size   =*/ buf_size,
+            /*.mem_buffer =*/ NULL,
+            /*.no_alloc   =*/ true, // the tensors will be allocated later by ggml_gallocr_alloc_graph()
+        };
+        struct ggml_context* ctx_test = ggml_init(params);
 
         // build an evaluation graph
-        struct ggml_cgraph* gf = nanogpt_model_build_eval_graph(&model, batch_count);
+        struct ggml_cgraph* gf = nanogpt_model_build_eval_graph(&model, batch_count, hparams.n_ctx);
 
         // do the necessary allocations so that we can pump our data in
-        bool success = ggml_gallocr_alloc_graph(allocr, gf);
+        bool success = ggml_gallocr_alloc_graph(model.allocr, gf);
         if (!success) {
             fprintf(stderr, "%s: call to ggml_gallocr_alloc_graph failed!.\n", __func__);
         }
@@ -98,14 +104,17 @@ void test_model_stage1() {
             targets[i] = 0.0f;
         }
 
+        struct ggml_tensor* token_ids_input = ggml_graph_get_tensor(gf, "token_ids_input");
+        TEST_ASSERT_TRUE(token_ids_input != NULL);
+
         // populate targets and tokens_input tensors in batches
         for (int k=0; k<batch_count; k++) {
-            struct ggml_tensor* tokens_input_k = ggml_view_1d(model.ctx,
-                                                    model.token_ids_input,
-                                                    model.token_ids_input->ne[0],
-                                                    k*model.token_ids_input->nb[1]);
+            struct ggml_tensor* tokens_input_k = ggml_view_1d(ctx_test,
+                                                    token_ids_input,
+                                                    token_ids_input->ne[0],
+                                                    k*token_ids_input->nb[1]);
 
-            int n_tokens = model.token_ids_input->ne[0];
+            int n_tokens = token_ids_input->ne[0];
             TEST_ASSERT_EQUAL(block_size, n_tokens);
 
             const int base_batch_offset = vocab_data.total_tokens * block_size * k;
@@ -128,6 +137,7 @@ void test_model_stage1() {
         success = nanogpt_model_calculate_loss(
             &model,
             batch_count,
+            block_size,
             gf,
             targets,
             targets_count,
@@ -151,6 +161,7 @@ void test_model_stage1() {
         success = nanogpt_model_get_last_logits(
             &model,
             batch_count,
+            block_size,
             gf,
             last_logits,
             last_logits_cap);
@@ -225,7 +236,7 @@ void test_model_stage1() {
 
         printf("\nReloading model ...\n\n");
 
-        ggml_gallocr_free(allocr);
+        ggml_free(ctx_test);
         nanogpt_model_free(&model);
     }
 
@@ -247,57 +258,51 @@ void test_model_stage1() {
         return;
     }
 
-    ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
-    struct ggml_cgraph* gf = nanogpt_model_build_eval_graph(&model, batch_count);
-    bool success = ggml_gallocr_alloc_graph(allocr, gf);
-    if (!success) {
-        fprintf(stderr, "%s: call to ggml_gallocr_alloc_graph failed!.\n", __func__);
-    }
-
     // now that the memory for the buffers has been allocated, randomize the model data for initialization
     nanogpt_model_randomize(&model);
 
     TokenId prompt[block_size];
-    const char* prompt_str = "Hello...";
-    success = dataset_vocab_encode_string(
+    const char* prompt_str = "\n";
+    bool success = dataset_vocab_encode_string(
         &vocab_data,
         prompt_str,
         prompt,
         block_size);
     TEST_ASSERT_EQUAL(true, success);
 
-    puts("\nInput tokens:");
-    for (int d=0; d<block_size; d++) {
-        if (d != 0 && d % block_size == 0) {
-            puts("");
-        }
-        printf("%d ", prompt[d]);
-    }
-    puts("\n");
-
-    const int num_to_predict = 128;
     const int64_t t_predict_start_us = ggml_time_us();
-    TokenId output_tokens[num_to_predict];
+
+    // establish our test sizes and create a token buffer
+    const int prompt_len = strlen(prompt_str);
+    const int num_to_predict =  1000;
+    const int token_buf_size = prompt_len + num_to_predict;
+    TokenId token_buffer[token_buf_size];
+
+    // initialize the token buffer with our prompt
+    memset(token_buffer, 0, sizeof(TokenId) * token_buf_size);
+    for (int i=0; i<strlen(prompt_str); ++i) {
+        token_buffer[i] = prompt[i];
+    }
+
     success = nanogpt_model_predict_batch(
         &model,
         &vocab_data,
         1, // batch_count
-        num_to_predict,
-        allocr,
-        prompt,
-        block_size,
-        output_tokens,
-        num_to_predict);
+        token_buf_size,
+        prompt_len,
+        token_buffer);
     TEST_ASSERT_EQUAL(true, success);
+
     const int64_t t_predict_end_us = ggml_time_us();
     const float t_predict_ms = (t_predict_end_us - t_predict_start_us)/1000.0f;
 
-    char predicted_str[num_to_predict + 1];
-    memset(predicted_str, 0, (num_to_predict+1) * sizeof(char));
-    dataset_vocab_decode_string(&vocab_data, output_tokens, predicted_str, num_to_predict);
-    TEST_ASSERT_EQUAL(num_to_predict, strlen(predicted_str));
+    // decode all of the tokens in the buffer and print out our generated text
+    char predicted_str[token_buf_size + 1];
+    memset(predicted_str, 0, (token_buf_size+1) * sizeof(char));
+    dataset_vocab_decode_string(&vocab_data, token_buffer, predicted_str, token_buf_size);
+    TEST_ASSERT_EQUAL(token_buf_size, strlen(predicted_str));
 
-    printf("Final prompt + prediction:\n%s%s\n\n", prompt_str, predicted_str);
+    printf("Final prompt + prediction:\n%s\n\n", predicted_str);
     printf("Predicting %d tokens ==>\n\ttotal time = %8.2f ms / %.2f ms per token / %.3f tokens per second\n\n", 
         num_to_predict, 
         t_predict_ms, 
@@ -305,7 +310,6 @@ void test_model_stage1() {
         1000.0f/(t_predict_ms/num_to_predict));
 
     // free up our allocations
-    ggml_gallocr_free(allocr);
     nanogpt_model_free(&model);
 }
 

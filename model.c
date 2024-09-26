@@ -38,7 +38,7 @@ nanogpt_model_init(
     int threads,
     int batch_count)
 {
-    size_t n_tensors = 8;
+    size_t n_tensors = 2;
     struct ggml_init_params params = {
         /*.mem_size   =*/ ggml_tensor_overhead() * n_tensors,
         /*.mem_buffer =*/ NULL,
@@ -94,22 +94,11 @@ nanogpt_model_init(
     
     model->params = hparams;
     model->embeddings = ggml_new_tensor_2d(model->ctx, GGML_TYPE_F32, model->params.n_embd, model->params.n_vocab);
+    ggml_set_param(model->ctx, model->embeddings);  
    
     // allocate the model tensors in a backend buffer
     model->buffer_w = ggml_backend_alloc_ctx_tensors(model->ctx, model->backend);
-
-    // setup our tensors for input tokens and their targets
-    model->token_ids_input = ggml_new_tensor_2d(model->ctx, GGML_TYPE_I32, model->params.n_ctx, batch_count);
-    ggml_set_input(model->token_ids_input);
-    model->tokens_input_1d = ggml_view_1d(
-        model->ctx,
-        model->token_ids_input,
-        model->token_ids_input->ne[0] * model->token_ids_input->ne[1],
-        0);
-
-
-    // from set_param_model() ...
-    ggml_set_param(model->ctx, model->embeddings);  
+    model->allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model->backend));
 
     return true;  
 }
@@ -123,6 +112,7 @@ nanogpt_model_free(struct nanogpt_model* model)
         ggml_backend_free(model->backend);
     }
     ggml_backend_free(model->cpu_backend);
+    ggml_gallocr_free(model->allocr);
 }
 
 void
@@ -140,8 +130,11 @@ nanogpt_model_randomize(
 struct ggml_cgraph *
 nanogpt_model_build_eval_graph(
     const struct nanogpt_model* model,
-    const int batches)
+    const int batches,
+    const int input_token_count)
 {
+    assert(input_token_count <= model->params.n_ctx);
+    
     // create the worst case graph for memory usage estimation
     size_t buf_size = ggml_tensor_overhead()*NANOGPT_MAX_NODES + ggml_graph_overhead_custom(NANOGPT_MAX_NODES, true);
     struct ggml_init_params params = {
@@ -153,12 +146,23 @@ nanogpt_model_build_eval_graph(
     struct ggml_context* ctx = ggml_init(params);
     struct ggml_cgraph* gf = ggml_new_graph_custom(ctx, NANOGPT_MAX_NODES, true);
 
+    // create new input token tensors that are dependent on the number of tokens being passed in
+    struct ggml_tensor* token_ids_input = ggml_new_tensor_2d(ctx, GGML_TYPE_I32, input_token_count, batches);
+    ggml_set_name(token_ids_input, "token_ids_input");
+    ggml_set_input(token_ids_input);
+
+    struct ggml_tensor* tokens_input_1d = ggml_view_1d(
+        ctx,
+        token_ids_input,
+        token_ids_input->ne[0] * token_ids_input->ne[1],
+        0);
+
     // pull the logits straight from the embeddings tensor of the model.
     // should be shape: [vocab_size, batch_size*block_size]
-    struct ggml_tensor* logits = ggml_get_rows(ctx, model->embeddings, model->tokens_input_1d);
+    struct ggml_tensor* logits = ggml_get_rows(ctx, model->embeddings, tokens_input_1d);
     ggml_set_name(logits, "logits");
     ggml_set_output(logits);
-    assert_shape_2d(logits, model->params.n_vocab, batches * model->params.n_ctx);
+    assert_shape_2d(logits, model->params.n_vocab, batches * input_token_count);
 
     // expand the graph so we can allocate and compute it
     ggml_build_forward_expand(gf, logits);
@@ -171,6 +175,7 @@ bool
 nanogpt_model_get_last_logits(
     const struct nanogpt_model* model,
     const int batches,
+    const int input_token_count,
     struct ggml_cgraph* eval_graph,
     float* out_logits,
     const int64_t out_logits_capacity)
@@ -191,7 +196,7 @@ nanogpt_model_get_last_logits(
         ggml_backend_tensor_get(
             logits_tensor, 
             &out_logits[offset], 
-            (offset*model->params.n_ctx + (model->params.n_ctx - 1) * model->params.n_embd) * sizeof(float), 
+            (offset*input_token_count + (input_token_count - 1) * model->params.n_embd) * sizeof(float), 
             model->params.n_embd * sizeof(float));
     }
 
@@ -202,12 +207,13 @@ bool
 nanogpt_model_calculate_loss(
     const struct nanogpt_model* model,
     const int batches,
+    const int input_token_count,
     struct ggml_cgraph* eval_graph,
     const float* targets,
     const int64_t targets_count,
     float* out_loss)
 {
-    const int64_t total_batched_size = model->params.n_ctx * batches;
+    const int64_t total_batched_size = input_token_count * batches;
 
     // make a new set of cpu allocators, context, graphs and tensors to do the 
     // final cross_entropy calcuation based on the computed logits and the
@@ -285,47 +291,59 @@ nanogpt_model_predict_batch(
     const struct dataset_vocab* vocab_data, 
     const int batch_count,
     int64_t num_to_predict,
-    ggml_gallocr_t allocr,
-    const TokenId* input_token_ids, // input_tokens [T, B]
     int64_t input_token_ids_count,
-    TokenId* output_tokens,
-    int64_t output_tokens_size) 
+    TokenId* tokens) // output_tokens [T, B]
 {
-    // for now we only support getting passed in a full context of tokens to
-    // bootstrap the prediction process.
-    assert(input_token_ids_count == model->params.n_ctx);
-    assert(output_tokens_size >= batch_count * num_to_predict);
-    memset(output_tokens, 0, sizeof(TokenId) * output_tokens_size);
-    
-    struct ggml_cgraph* eval_graph = nanogpt_model_build_eval_graph(model, batch_count);
-    bool success = ggml_gallocr_alloc_graph(allocr, eval_graph);
-    if (!success) {
-        fprintf(stderr, "%s: call to ggml_gallocr_alloc_graph failed!.\n", __func__);
-    }
+    // need at least one token to base predictions on
+    assert(input_token_ids_count > 0);
 
     // for each token to predict ...
-    for (int pred_i=0; pred_i<num_to_predict; ++pred_i) {
+    for (int pred_i=input_token_ids_count; pred_i<num_to_predict; ++pred_i) {
+        int context_token_count = pred_i;
+        if (context_token_count >= model->params.n_ctx) {
+            context_token_count = model->params.n_ctx;
+        }
+
+        struct ggml_cgraph* eval_graph = nanogpt_model_build_eval_graph(model, batch_count, context_token_count);
+        assert(eval_graph != NULL);
+        
+        bool success = ggml_gallocr_alloc_graph(model->allocr, eval_graph);
+        if (!success) {
+            fprintf(stderr, "%s: call to ggml_gallocr_alloc_graph failed!.\n", __func__);
+        }
+       
+        struct ggml_tensor* token_ids_input = ggml_graph_get_tensor(eval_graph, "token_ids_input");
+        if (token_ids_input == NULL) {
+            fprintf(stderr, "%s: failed to get token_ids_input tensor by name.\n", __func__);    
+            return false;
+        }
+
         // populate targets and tokens_input tensors in batches
         for (int k=0; k<batch_count; k++) {
-            int n_tokens = model->token_ids_input->ne[0];
-            assert(model->params.n_ctx == n_tokens);
-
-            // make targets a series of one-hot vectors for the desired tokens
-            for (int i=0; i<n_tokens; ++i) {
-                TokenId token_id;
-                // check to see if we're still within range of the initial input parameters
-                if (pred_i + i < n_tokens) {
-                    token_id = input_token_ids[k*n_tokens + pred_i + i];
-                    //printf("  DEBUG: b1 => pred_i %d ; i %d ; n_tokens %d ==> %d", pred_i, i, n_tokens, k*n_tokens + pred_i + i);
-                } else {
-                    token_id = output_tokens[pred_i + i - n_tokens];
-                    //printf(  "  DEBUG: b2 => pred_i %d ; i %d ; n_tokens %d ==> %d", pred_i, i, n_tokens, pred_i + i - n_tokens);
-                }
-                //printf(" --> %d : '%c'\n", token_id, vocab_data->itot[token_id]);
+            int offset = 0;
+            if (context_token_count == model->params.n_ctx) {
+                offset = pred_i - model->params.n_ctx; 
+            }
+            for (int i=0; i<context_token_count; ++i) {
+                TokenId token_id = tokens[k*context_token_count + offset + i];
+                // printf("  DEBUG: offset %d ; pred_i %d ; i %d ; context_token_count %d ==> %d", 
+                //     offset, pred_i, i, context_token_count, k*context_token_count + offset + i);
+                // printf(" --> %d : '%c'\n", token_id, vocab_data->itot[token_id]);
                 
-                ggml_backend_tensor_set(model->tokens_input_1d, &token_id, i*sizeof(TokenId), sizeof(TokenId));
+                ggml_backend_tensor_set(token_ids_input, &token_id, (k*context_token_count+i)*sizeof(TokenId), sizeof(TokenId));
             }
         }  
+
+            // set backend options
+        if (ggml_backend_is_cpu(model->backend)) {
+            ggml_backend_cpu_set_n_threads(model->backend, model->threads);
+        }
+
+#ifdef GGML_USE_METAL
+        if (ggml_backend_is_metal(model->backend)) {
+            ggml_backend_metal_set_n_cb(model->backend, model->threads);
+        }
+#endif
 
         // run the calculation for the expanded graph
         ggml_backend_graph_compute(model->backend, eval_graph);
@@ -335,9 +353,10 @@ nanogpt_model_predict_batch(
         for (int i=0; i<last_logits_cap; ++i) {
             last_logits[i] = -42.42f;
         }
-        bool success = nanogpt_model_get_last_logits(
+        success = nanogpt_model_get_last_logits(
             model,
             batch_count,
+            context_token_count,
             eval_graph,
             last_logits,
             last_logits_cap);
@@ -364,7 +383,7 @@ nanogpt_model_predict_batch(
 
         // put the predictions into the output buffer, split according to batches
         for (int k=0; k<batch_count; ++k) {
-            output_tokens[k*num_to_predict + pred_i] = predictions[k];
+            tokens[k*num_to_predict + pred_i] = predictions[k];
         }
     }
 

@@ -14,14 +14,13 @@ struct nanogpt_model_hparams {
 struct nanogpt_model {
     struct ggml_context * ctx;
     ggml_backend_t backend;
+    ggml_gallocr_t allocr;
     ggml_backend_buffer_t buffer_w;
     ggml_backend_t cpu_backend;
     
     int threads;
     struct nanogpt_model_hparams params;
     struct ggml_tensor* embeddings;
-    struct ggml_tensor* token_ids_input;
-    struct ggml_tensor* tokens_input_1d; 
 };
 
 // initialize the model
@@ -42,11 +41,14 @@ nanogpt_model_randomize(
     struct nanogpt_model* model);
 
 // constructs the computation graph for the forward evaluation of the model
-// with the output tensor 'logits' set as the output.
+// with the output tensor 'logits' set as the output. `input_token_count`
+// indicates how many tokens are going to be passed as input and should
+// not exceed the model's `n_ctx` parameter.
 struct ggml_cgraph *
 nanogpt_model_build_eval_graph(
     const struct nanogpt_model* model,
-    const int batches);
+    const int batches,
+    const int input_token_count);
 
 // takes a loaded model and the computed evaluation graph to pull 'logits'
 // from, taking the last set of logits for each batch and putting them
@@ -57,6 +59,7 @@ bool
 nanogpt_model_get_last_logits(
     const struct nanogpt_model* model,
     const int batches,
+    const int input_token_count,
     struct ggml_cgraph* eval_graph,
     float* out_logits,
     const int64_t out_logits_capacity);
@@ -64,25 +67,30 @@ nanogpt_model_get_last_logits(
 // takes the loaded model, a cpu backend to do the work on, and the 
 // computed evaluation graph to pull 'logits', a named tensor, from.
 // the logits are compared against the `targets` and the loss is 
-// placed in `out_loss` as an output value. overall success of the
-// function is returned as a bool.
+// placed in `out_loss` as an output value.
+//
+// overall success of the function is returned as a bool.
 bool
 nanogpt_model_calculate_loss(
     const struct nanogpt_model* model,
     const int batches,
+    const int input_token_count,
     struct ggml_cgraph* eval_graph,
     const float* targets,
     const int64_t targets_count,
     float* out_loss);
 
+// predicts text based on the incoming token ids. client code
+// should put the 'prompt' tokens into `tokens` and pass the number
+// of prompt tokens as `input_token_ids_count` (which must be >0).
+// `num_to_predict` should include input token size, so if you pass
+// 8 tokens and want 100 new ones, `num_to_predict` should be 108.
+// `tokens` should be sized to `num_to_predict`
 bool
 nanogpt_model_predict_batch(
     const struct nanogpt_model* model,
     const struct dataset_vocab* vocab_data, 
     const int batch_count,
     int64_t num_to_predict,
-    ggml_gallocr_t allocr,
-    const TokenId* input_token_ids, // input_tokens [T, B]
     int64_t input_token_ids_count,
-    TokenId* output_tokens,
-    int64_t output_tokens_size);
+    TokenId* tokens);

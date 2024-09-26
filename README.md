@@ -48,5 +48,4 @@ Released under the MIT license. See the `LICENSE` file for further details.
 ## Notes:
 
 * `data/shakes.txt` was downloaded from `https://github.com/karpathy/char-rnn/blob/master/data/tinyshakespeare/input.txt`
-* Every tensor counts, including views, when doing the `ggml_init_params.mem_size` calculation. If you create
-  a view in a hot loop, you'll blow the memory pool for the context after enough iterations.
+* Dataset is not split into 'eval' and 'training' sets
