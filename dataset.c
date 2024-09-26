@@ -65,6 +65,28 @@ Token dataset_vocab_decode(const struct dataset_vocab* vocab_data, TokenId id)
     return vocab_data->itot[id];
 }
 
+bool 
+dataset_vocab_encode_string(
+    const struct dataset_vocab* vocab_data, 
+    const char* input_string,
+    TokenId* token_id_buffer,
+    int64_t token_id_buffer_size) 
+{
+    size_t len = strlen(input_string);
+    if (len > token_id_buffer_size) {
+        return false;
+    }
+
+    // clear the buffer
+    memset(token_id_buffer, 0, token_id_buffer_size*sizeof(TokenId));
+
+    for (int i=0; i<len; ++i) {
+        token_id_buffer[i] = vocab_data->ttoi[input_string[i]];
+    }    
+
+    return true;
+}
+
 void 
 dataset_vocab_decode_string(
     const struct dataset_vocab* vocab_data, 

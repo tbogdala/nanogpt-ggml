@@ -18,6 +18,7 @@ add_executable(nanogpt_ggml
     main.c
     dataset.c
     model.c
+    utility.c
 )
 target_link_libraries(nanogpt_ggml PUBLIC ggml)
 
@@ -35,5 +36,6 @@ add_executable(test_model_stage1
     tests/test_model_stage1.c
     dataset.c
     model.c
+    utility.c
     )
 target_link_libraries(test_model_stage1 PRIVATE unity ggml)

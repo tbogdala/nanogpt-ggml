@@ -1,3 +1,6 @@
+#pragma once
+#include <stdbool.h>
+
 // make an alias for the token datatype for readability
 typedef char Token;
 typedef int32_t TokenId;
@@ -36,6 +39,15 @@ Token
 dataset_vocab_decode(
     const struct dataset_vocab* vocab_data, 
     TokenId id);
+
+// for a given string, populate an output buffer with corresponding
+// token ids.
+bool 
+dataset_vocab_encode_string(
+    const struct dataset_vocab* vocab_data, 
+    const char* input_string,
+    TokenId* token_id_buffer,
+    int64_t token_id_buffer_size);
 
 // for a given buffer of TokenIds, populate a null terminated char string.
 // NOTE: it's the caller's responsibility to make sure (`count` + 1), for NULL terminator,

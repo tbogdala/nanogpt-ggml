@@ -11,11 +11,14 @@ The source video: https://www.youtube.com/watch?v=kCc8FmEb1nY
 
 ## Current Progress For This Commit
 
-Still in the bigram language model phase... and current up to 28m 50s in the source youtube video.
+Still in the bigram language model phase... and current up to 34m 50s in the source youtube video.
+The model is still untrained, but random garbage can be predicted based on the randomized
+initialization of the embedding tensor.
 
-All the code that tests the initial logits prediction is in `test_model_stage1.c`. GGML does cross_entropy
-a little different and requires tensors of the same dimensions, so a one-hot table is made for the
-target token id to be used for the loss calculations.
+All the code that tests the initial logits prediction is in `test_model_stage1.c`. 
+
+GGML does cross_entropy a little different and requires tensors of the same dimensions, 
+so a one-hot table is made for the target token id to be used for the loss calculations.
 
 
 ## Building the source
@@ -45,3 +48,5 @@ Released under the MIT license. See the `LICENSE` file for further details.
 ## Notes:
 
 * `data/shakes.txt` was downloaded from `https://github.com/karpathy/char-rnn/blob/master/data/tinyshakespeare/input.txt`
+* Every tensor counts, including views, when doing the `ggml_init_params.mem_size` calculation. If you create
+  a view in a hot loop, you'll blow the memory pool for the context after enough iterations.
