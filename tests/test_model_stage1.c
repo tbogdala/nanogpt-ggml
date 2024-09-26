@@ -275,32 +275,32 @@ void test_model_stage1() {
     // establish our test sizes and create a token buffer
     const int prompt_len = strlen(prompt_str);
     const int num_to_predict =  1000;
-    const int token_buf_size = prompt_len + num_to_predict;
-    TokenId token_buffer[token_buf_size];
+    const int predict_buf_size = prompt_len + num_to_predict;
+    TokenId predict_buffer[predict_buf_size];
 
     // initialize the token buffer with our prompt
-    memset(token_buffer, 0, sizeof(TokenId) * token_buf_size);
+    memset(predict_buffer, 0, sizeof(TokenId) * predict_buf_size);
     for (int i=0; i<strlen(prompt_str); ++i) {
-        token_buffer[i] = prompt[i];
+        predict_buffer[i] = prompt[i];
     }
 
     success = nanogpt_model_predict_batch(
         &model,
         &vocab_data,
         1, // batch_count
-        token_buf_size,
+        predict_buf_size,
         prompt_len,
-        token_buffer);
+        predict_buffer);
     TEST_ASSERT_EQUAL(true, success);
 
     const int64_t t_predict_end_us = ggml_time_us();
     const float t_predict_ms = (t_predict_end_us - t_predict_start_us)/1000.0f;
 
     // decode all of the tokens in the buffer and print out our generated text
-    char predicted_str[token_buf_size + 1];
-    memset(predicted_str, 0, (token_buf_size+1) * sizeof(char));
-    dataset_vocab_decode_string(&vocab_data, token_buffer, predicted_str, token_buf_size);
-    TEST_ASSERT_EQUAL(token_buf_size, strlen(predicted_str));
+    char predicted_str[predict_buf_size + 1];
+    memset(predicted_str, 0, (predict_buf_size+1) * sizeof(char));
+    dataset_vocab_decode_string(&vocab_data, predict_buffer, predicted_str, predict_buf_size);
+    TEST_ASSERT_EQUAL(predict_buf_size, strlen(predicted_str));
 
     printf("Final prompt + prediction:\n%s\n\n", predicted_str);
     printf("Predicting %d tokens ==>\n\ttotal time = %8.2f ms / %.2f ms per token / %.3f tokens per second\n\n", 
