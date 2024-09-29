@@ -8,6 +8,8 @@ represent certain progress points will be listed here for anyone else that wants
 
 The source video: https://www.youtube.com/watch?v=kCc8FmEb1nY
 
+Platform support: Only tested on CPU MacOS builds for now.
+
 
 ## Current Progress For This Commit
 
@@ -28,10 +30,15 @@ config flags to compile features into GGML can be used and CUDA support should
 theoretically work that way, but is untested.
 
 ```bash
-cmake -B build
+cmake -B build -DGGML_METAL=Off
 cmake --build build --config Release
 ./build/bin/test_model_stage1
 ```
+
+**NOTE**: Metal has to be disabled because it doesn't support the functions
+necessary to enable loss calculations for the training process.
+
+As of right now, only the CPU backend is being tested ...
 
 
 ## Commit History Markers

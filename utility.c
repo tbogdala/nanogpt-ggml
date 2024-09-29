@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+
 #include "dataset.h"
 #include "utility.h"
 
@@ -16,8 +17,9 @@ calc_softmax_inplace(
 
         // Calculate the exponential of each logit and sum them up
         for (int i=0; i<embd_size; ++i) {
-            logits[offset + i] = exp(logits[offset + i]);
-            sum += logits[offset + i];
+            float calc = exp(logits[offset + i]);
+            logits[offset + i] = calc;
+            sum += calc;
         }
 
         // Normalize the output probabilities by dividing each exponential value by their sum

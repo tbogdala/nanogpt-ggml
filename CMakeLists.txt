@@ -11,7 +11,6 @@ add_subdirectory("ggml")
 
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/ggml/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/TinyMT/tinymt
 )
 
 add_executable(nanogpt_ggml
@@ -24,7 +23,7 @@ target_link_libraries(nanogpt_ggml PUBLIC ggml)
 
 # Unit testing
 
-add_subdirectory(unity)
+add_subdirectory(Unity)
 
 add_executable(test_dataset 
     tests/test_dataset.c
@@ -39,3 +38,11 @@ add_executable(test_model_stage1
     utility.c
     )
 target_link_libraries(test_model_stage1 PRIVATE unity ggml)
+
+add_executable(test_model_prediction
+    tests/test_model_prediction.c
+    dataset.c
+    model.c
+    utility.c
+    )
+target_link_libraries(test_model_prediction PRIVATE unity ggml)
